@@ -9,8 +9,7 @@ st.set_page_config(
     layout="wide",
 )
 
-st.title("📅 Timetable Dashboard")
-st.caption("Week-wise schedule starting from today")
+st.title("📅 IIM Ranchi Timetable Dashboard")
 
 # ---------------- LOAD DATA ----------------
 FILE_PATH = Path(__file__).parent / "timetable.csv"
@@ -34,6 +33,7 @@ if missing:
 df["date"] = pd.to_datetime(df["date"], dayfirst=True, errors="coerce")
 df = df.dropna(subset=["date"])
 
+df["weekday"] = df["date"].dt.day_name()
 df["start time"] = df["start time"].astype(str)
 df["end time"] = df["end time"].astype(str)
 
@@ -48,11 +48,10 @@ filtered = df[df["subject"].isin(selected_subjects)] if selected_subjects else d
 
 # ---------------- WEEK LOGIC ----------------
 today = pd.to_datetime(datetime.today().date())
+today_name = today.day_name()
 
-# find Monday of current week
 current_week_start = today - pd.to_timedelta(today.weekday(), unit="D")
 
-# create week options
 week_options = {}
 for i in range(0, 6):
     start = current_week_start + timedelta(weeks=i)
@@ -72,38 +71,54 @@ week_df = filtered[
 st.divider()
 st.subheader(f"📌 Schedule for {week_start.strftime('%d %b')} – {week_end.strftime('%d %b')}")
 
-if week_df.empty:
-    st.info("No classes scheduled for this week.")
-else:
-    days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+cols = st.columns(7)
 
-    cols = st.columns(7)
+for i, day in enumerate(days):
+    with cols[i]:
 
-    for i, day in enumerate(days):
-        with cols[i]:
-            st.markdown(f"### {day}")
-            day_df = week_df[week_df["day"].str.lower() == day.lower()]
+        is_today = (day == today_name and week_start <= today <= week_end)
 
-            if day_df.empty:
-                st.caption("No classes")
-            else:
-                for _, row in day_df.iterrows():
-                    st.markdown(
-                        f"""
-                        <div style="
-                            padding:10px;
-                            margin-bottom:10px;
-                            border-radius:10px;
-                            background-color:#f5f7fa;
-                            border-left:4px solid #4f8bf9;
-                        ">
-                        <b>{row['subject']}</b><br>
-                        🕒 {row['start time']} – {row['end time']}<br>
-                        📍 {row['location']}
-                        </div>
-                        """,
-                        unsafe_allow_html=True
-                    )
+        header_style = f"""
+        <div style="
+            padding:8px;
+            border-radius:10px;
+            text-align:center;
+            font-weight:700;
+            background-color:{'#ffe9a8' if is_today else '#1f2937'};
+            color:{'#000000' if is_today else '#ffffff'};
+            margin-bottom:10px;
+        ">
+            {day}
+            {'<br><small>Today</small>' if is_today else ''}
+        </div>
+        """
+
+        st.markdown(header_style, unsafe_allow_html=True)
+
+        day_df = week_df[week_df["weekday"] == day]
+
+        if day_df.empty:
+            st.caption("No classes")
+        else:
+            for _, row in day_df.iterrows():
+                st.markdown(
+                    f"""
+                    <div style="
+                        padding:10px;
+                        margin-bottom:10px;
+                        border-radius:10px;
+                        background-color:{'#fff4cc' if is_today else '#f5f7fa'};
+                        border-left:5px solid {'#f59e0b' if is_today else '#4f8bf9'};
+                        color:#000000;
+                    ">
+                    <b>{row['subject']}</b><br>
+                    🕒 {row['start time']} – {row['end time']}<br>
+                    📍 {row['location']}
+                    </div>
+                    """,
+                    unsafe_allow_html=True
+                )
 
 # ---------------- DOWNLOAD ----------------
 st.divider()
