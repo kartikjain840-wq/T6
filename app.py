@@ -1,107 +1,132 @@
 import streamlit as st
 import pandas as pd
 from pathlib import Path
-from datetime import datetime
-from reportlab.lib.pagesizes import A4
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
-from reportlab.lib.styles import getSampleStyleSheet
-from reportlab.lib import colors
-import tempfile
+from datetime import datetime, timedelta
 
 # ---------------- PAGE CONFIG ----------------
-st.set_page_config(page_title="Timetable Dashboard", layout="wide")
+st.set_page_config(
+    page_title="Timetable Dashboard",
+    layout="wide",
+)
+
 st.title("📅 Timetable Dashboard")
-st.caption("Week-wise and term-wide schedule")
+st.caption("Week-wise schedule starting from today")
 
 # ---------------- LOAD DATA ----------------
 FILE_PATH = Path(__file__).parent / "timetable.csv"
 
 if not FILE_PATH.exists():
-    st.error("❌ timetable.csv not found.")
+    st.error("❌ timetable.csv not found in the app folder.")
     st.stop()
 
 df = pd.read_csv(FILE_PATH)
+
+# normalize headers
 df.columns = [c.strip().lower().replace("_", " ") for c in df.columns]
+
+required = ["date", "day", "subject", "start time", "end time", "location"]
+missing = [c for c in required if c not in df.columns]
+if missing:
+    st.error(f"❌ Missing columns in CSV: {', '.join(missing)}")
+    st.stop()
 
 # ---------------- PREPROCESS ----------------
 df["date"] = pd.to_datetime(df["date"], dayfirst=True, errors="coerce")
 df = df.dropna(subset=["date"])
 
 df["weekday"] = df["date"].dt.day_name()
+df["start time"] = df["start time"].astype(str)
+df["end time"] = df["end time"].astype(str)
 
-df["start dt"] = pd.to_datetime(
-    df["date"].dt.strftime("%Y-%m-%d") + " " + df["start time"],
-    errors="coerce"
-)
-
-# ---------------- FILTER ----------------
+# ---------------- FILTERS ----------------
 subjects = sorted(df["subject"].dropna().unique())
-selected_subjects = st.multiselect("🎓 Select subjects", subjects)
+selected_subjects = st.multiselect(
+    "🎓 Select subjects",
+    subjects,
+)
 
 filtered = df[df["subject"].isin(selected_subjects)] if selected_subjects else df.copy()
 
-# ---------------- TERM-WIDE VIEW ----------------
-st.divider()
-st.subheader("📆 Term-wide Calendar View")
+# ---------------- WEEK LOGIC ----------------
+today = pd.to_datetime(datetime.today().date())
+today_name = today.day_name()
 
-term_df = (
-    filtered
-    .sort_values(["date", "start dt"])
-    [["date", "weekday", "subject", "start time", "end time", "location"]]
+current_week_start = today - pd.to_timedelta(today.weekday(), unit="D")
+
+week_options = {}
+for i in range(0, 6):
+    start = current_week_start + timedelta(weeks=i)
+    end = start + timedelta(days=6)
+    label = f"Week {i+1}: {start.strftime('%d %b')} – {end.strftime('%d %b')}"
+    week_options[label] = (start, end)
+
+selected_week = st.selectbox("🗓️ Select week", list(week_options.keys()))
+week_start, week_end = week_options[selected_week]
+
+week_df = filtered[
+    (filtered["date"] >= week_start) &
+    (filtered["date"] <= week_end)
+].sort_values(["date", "start time"])
+
+# ---------------- DISPLAY ----------------
+st.divider()
+st.subheader(f"📌 Schedule for {week_start.strftime('%d %b')} – {week_end.strftime('%d %b')}")
+
+days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+cols = st.columns(7)
+
+for i, day in enumerate(days):
+    with cols[i]:
+
+        is_today = (day == today_name and week_start <= today <= week_end)
+
+        header_style = f"""
+        <div style="
+            padding:8px;
+            border-radius:10px;
+            text-align:center;
+            font-weight:700;
+            background-color:{'#ffe9a8' if is_today else '#1f2937'};
+            color:{'#000000' if is_today else '#ffffff'};
+            margin-bottom:10px;
+        ">
+            {day}
+            {'<br><small>Today</small>' if is_today else ''}
+        </div>
+        """
+
+        st.markdown(header_style, unsafe_allow_html=True)
+
+        day_df = week_df[week_df["weekday"] == day]
+
+        if day_df.empty:
+            st.caption("No classes")
+        else:
+            for _, row in day_df.iterrows():
+                st.markdown(
+                    f"""
+                    <div style="
+                        padding:10px;
+                        margin-bottom:10px;
+                        border-radius:10px;
+                        background-color:{'#fff4cc' if is_today else '#f5f7fa'};
+                        border-left:5px solid {'#f59e0b' if is_today else '#4f8bf9'};
+                        color:#000000;
+                    ">
+                    <b>{row['subject']}</b><br>
+                    🕒 {row['start time']} – {row['end time']}<br>
+                    📍 {row['location']}
+                    </div>
+                    """,
+                    unsafe_allow_html=True
+                )
+
+# ---------------- DOWNLOAD ----------------
+st.divider()
+csv_bytes = week_df.to_csv(index=False).encode("utf-8")
+st.download_button(
+    "⬇️ Download this week's timetable (CSV)",
+    csv_bytes,
+    f"timetable_{week_start.strftime('%d_%b')}.csv",
+    "text/csv",
 )
-
-term_df["date"] = term_df["date"].dt.strftime("%d %b %Y")
-
-st.dataframe(term_df, use_container_width=True)
-
-# ---------------- PDF GENERATION ----------------
-def generate_pdf(dataframe):
-    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
-
-    doc = SimpleDocTemplate(tmp.name, pagesize=A4)
-    styles = getSampleStyleSheet()
-    elements = []
-
-    elements.append(Paragraph("Term-wise Class Schedule", styles["Title"]))
-    elements.append(Spacer(1, 12))
-
-    table_data = [
-        ["Date", "Day", "Subject", "Time", "Location"]
-    ]
-
-    for _, row in dataframe.iterrows():
-        table_data.append([
-            row["date"],
-            row["weekday"],
-            row["subject"],
-            f"{row['start time']} – {row['end time']}",
-            row["location"],
-        ])
-
-    table = Table(table_data, repeatRows=1)
-    table.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
-        ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
-        ("FONT", (0, 0), (-1, 0), "Helvetica-Bold"),
-        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("LEFTPADDING", (0, 0), (-1, -1), 6),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
-    ]))
-
-    elements.append(table)
-    doc.build(elements)
-
-    return tmp.name
-
-# ---------------- DOWNLOAD PDF ----------------
-st.divider()
-if st.button("⬇️ Download entire term calendar (PDF)"):
-    pdf_path = generate_pdf(term_df)
-    with open(pdf_path, "rb") as f:
-        st.download_button(
-            label="📄 Click to download PDF",
-            data=f,
-            file_name="Term_Calendar.pdf",
-            mime="application/pdf",
-        )
