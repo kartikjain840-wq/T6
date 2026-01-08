@@ -3,6 +3,13 @@ import pandas as pd
 from pathlib import Path
 from datetime import datetime, timedelta
 
+# PDF imports (ONLY addition)
+from reportlab.lib.pagesizes import A4
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib import colors
+import tempfile
+
 # ---------------- PAGE CONFIG ----------------
 st.set_page_config(
     page_title="Timetable Dashboard",
@@ -80,22 +87,22 @@ for i, day in enumerate(days):
 
         is_today = (day == today_name and week_start <= today <= week_end)
 
-        header_style = f"""
-        <div style="
-            padding:8px;
-            border-radius:10px;
-            text-align:center;
-            font-weight:700;
-            background-color:{'#ffe9a8' if is_today else '#1f2937'};
-            color:{'#000000' if is_today else '#ffffff'};
-            margin-bottom:10px;
-        ">
-            {day}
-            {'<br><small>Today</small>' if is_today else ''}
-        </div>
-        """
-
-        st.markdown(header_style, unsafe_allow_html=True)
+        st.markdown(
+            f"""
+            <div style="
+                padding:8px;
+                border-radius:10px;
+                text-align:center;
+                font-weight:700;
+                background-color:{'#ffe9a8' if is_today else '#1f2937'};
+                color:{'#000000' if is_today else '#ffffff'};
+                margin-bottom:10px;
+            ">
+                {day}
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
 
         day_df = week_df[week_df["weekday"] == day]
 
@@ -113,15 +120,15 @@ for i, day in enumerate(days):
                         border-left:5px solid {'#f59e0b' if is_today else '#4f8bf9'};
                         color:#000000;
                     ">
-                    <b>{row['subject']}</b><br>
-                    🕒 {row['start time']} – {row['end time']}<br>
-                    📍 {row['location']}
+                        <b>{row['subject']}</b><br>
+                        🕒 {row['start time']} – {row['end time']}<br>
+                        📍 {row['location']}
                     </div>
                     """,
                     unsafe_allow_html=True
                 )
 
-# ---------------- DOWNLOAD ----------------
+# ---------------- WEEK CSV DOWNLOAD ----------------
 st.divider()
 csv_bytes = week_df.to_csv(index=False).encode("utf-8")
 st.download_button(
@@ -130,3 +137,55 @@ st.download_button(
     f"timetable_{week_start.strftime('%d_%b')}.csv",
     "text/csv",
 )
+
+# ---------------- TERM PDF DOWNLOAD (ONLY ADDITION) ----------------
+def generate_term_pdf(dataframe):
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
+
+    doc = SimpleDocTemplate(tmp.name, pagesize=A4)
+    styles = getSampleStyleSheet()
+    elements = []
+
+    elements.append(Paragraph("Term-wise Class Schedule", styles["Title"]))
+    elements.append(Spacer(1, 12))
+
+    table_data = [["Date", "Day", "Subject", "Time", "Location"]]
+
+    pdf_df = dataframe.sort_values(["date", "start time"])
+
+    for _, row in pdf_df.iterrows():
+        table_data.append([
+            row["date"].strftime("%d %b %Y"),
+            row["weekday"],
+            row["subject"],
+            f"{row['start time']} – {row['end time']}",
+            row["location"],
+        ])
+
+    table = Table(table_data, repeatRows=1)
+    table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+        ("FONT", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 6),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+    ]))
+
+    elements.append(table)
+    doc.build(elements)
+
+    return tmp.name
+
+
+st.divider()
+if st.button("⬇️ Download entire term timetable (PDF)"):
+    pdf_path = generate_term_pdf(filtered)
+    with open(pdf_path, "rb") as f:
+        st.download_button(
+            "📄 Click to download PDF",
+            f,
+            file_name="Term_Timetable.pdf",
+            mime="application/pdf",
+        )
